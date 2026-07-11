@@ -1,0 +1,19 @@
+# pi agent 源码（他人仓库克隆，不提交）
+pi/
+
+# API 密钥
+.env
+
+# Firecrawl 工具缓存
+.firecrawl/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# 系统文件
+.DS_Store
+Thumbs.db
