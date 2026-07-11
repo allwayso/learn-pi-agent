@@ -1,10 +1,12 @@
 # learn-pi-agent
 
-> 逐层拆解 [pi agent](https://github.com/earendil-works/pi-mono)，用 Python 手写一个完整的 agent 运行时。
+> 逐层拆解 [pi agent](https://github.com/earendil-works/pi-mono)，用 TypeScript 手写一个完整的 agent 运行时。
 
 ## 这是什么
 
-一个 **Agent 学习仓库**——通过阅读 pi agent（极简但完整的现代 TypeScript agent 运行时）的源码，逐层用 Python 复刻其核心架构。终极目标：能手写出 pi agent 的主干代码，并理解每一个架构决策的"为什么"。
+一个 **Agent 学习仓库**——通过阅读 pi agent（极简但完整的现代 TypeScript agent 运行时）的源码，逐层用 TypeScript 复刻其核心架构。与 pi 同语言，零翻译成本，可以直接 `code -d` 对比源码和实现。
+
+终极目标：能手写出 pi agent 的主干代码，并理解每一个架构决策的"为什么"。
 
 ## pi agent 是什么
 
@@ -17,21 +19,22 @@
 | `pi-coding-agent` | 交互式 CLI 编程 agent |
 | `pi-tui` / `pi-orchestrator` | 终端 UI / 多 agent 编排 |
 
-本仓库聚焦于 `pi-agent-core` 的学习和 Python 复刻。
+本仓库聚焦于 `pi-agent-core` 的学习和 TypeScript 复刻。
 
 ## 学习路线
 
-8 个阶段，逐层递进：
+9 个阶段（含阶段 0 TypeScript 入门），逐层递进：
 
 ```
-阶段 1：LLM 调用基础        → requests → streaming → retry
-阶段 2：Tool Call           → 让 LLM 调用函数，并行/串行执行
-阶段 3：Agent Loop ★        → 手写 pi 的核心循环（双层 while + 事件系统）
-阶段 4：Agent 类            → 状态管理 + 消息队列 + Hook + abort
-阶段 5：Harness 层          → 会话持久化 + 系统提示词 + Skills
-阶段 6：上下文工程          → 窗口管理 + 压缩 + 分支摘要
-阶段 7：扩展话题            → 子 Agent + MCP + Orchestrator
-阶段 8：综合复刻 ★          → ~500 行完整 pi 主干
+阶段 0：TypeScript 入门      → 类型系统 + async/await + fetch
+阶段 1：LLM 调用基础         → fetch → streaming → retry
+阶段 2：Tool Call            → 让 LLM 调用函数，并行/串行执行
+阶段 3：Agent Loop ★         → 手写 pi 的核心循环（双层 while + 事件系统）
+阶段 4：Agent 类             → 状态管理 + 消息队列 + Hook + abort
+阶段 5：Harness 层           → 会话持久化 + 系统提示词 + Skills
+阶段 6：上下文工程           → 窗口管理 + 压缩 + 分支摘要
+阶段 7：扩展话题             → 子 Agent + MCP + Orchestrator
+阶段 8：综合复刻 ★           → ~500 行完整 pi 主干
 ```
 
 详见 [CLAUDE.md](CLAUDE.md) 中的完整路线。
@@ -40,10 +43,10 @@
 
 ```
 agent/
-├── learn-pi-agent/      # ★ 所有阶段代码（Python）
+├── learn-pi-agent/      # ★ 所有阶段代码（TypeScript）
 │   ├── notes/           # 跨阶段架构笔记
+│   ├── stage0-ts-basics/
 │   ├── stage1-llm-basics/
-│   ├── stage2-tool-call/
 │   ├── ...
 │   └── stage8-pi-core/
 ├── ReAct/               # ReAct 论文学习笔记
@@ -54,13 +57,15 @@ agent/
 
 ## 环境
 
-- Python 3.9+
+- Node.js 18+
 - DeepSeek API（OpenAI 兼容）
-- 阶段 1 用 `requests`，阶段 2.2 起用 `openai` SDK
 
 ```bash
 # 安装依赖
-pip install requests openai python-dotenv tiktoken
+npm install
+
+# 运行脚本
+npx tsx learn-pi-agent/stage0-ts-basics/0.1-hello.ts
 
 # 配置 API Key
 echo "DEEPSEEK_API_KEY=你的key" > .env
@@ -70,6 +75,7 @@ echo "DEEPSEEK_API_KEY=你的key" > .env
 
 - [x] ReAct 论文精读
 - [x] pi agent 源码结构理解
+- [ ] 阶段 0：TypeScript 入门
 - [ ] 阶段 1：LLM 调用基础
 - [ ] 阶段 2：Tool Call
 - [ ] 阶段 3：Agent Loop
