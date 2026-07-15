@@ -1,6 +1,9 @@
 # pi agent 源码（他人仓库克隆，不提交）
 pi/
 
+# Node.js 依赖
+node_modules/
+
 # API 密钥
 .env
 

@@ -54,29 +54,23 @@ agent/
 每个阶段在 `learn-pi-agent/stageN-<topic>/` 下建目录和脚本。
 
 笔记规则：
-- 每个阶段目录放一个 `NOTES.md`，记录该阶段学习过程中的发现和问题
+- 笔记直接写在 `.ts` 文件里，用注释形式。代码和解释不分离，读代码的同时就能理解设计意图
 - 跨阶段的架构洞察放 `learn-pi-agent/notes/`（如 `architecture.md`、`design-decisions.md`）
 - 和 `ReAct/notes/ReAct.md` 保持一致的笔记风格
 
 ```
 learn-pi-agent/
-├── notes/                       # 跨阶段笔记
+├── notes/                       # 跨阶段笔记（长文）
 │   ├── architecture.md
 │   └── design-decisions.md
 ├── stage0-ts-basics/
-│   ├── 0.1 hello.ts
-│   ├── 0.2 types.ts
-│   ├── 0.3 async.ts
-│   ├── 0.4 fetch.ts
-│   └── NOTES.md
+│   ├── 0.1-hello.ts             # ★ 代码即笔记，注释即文档
+│   ├── 0.2-types.ts
+│   ├── 0.3-async.ts
+│   └── 0.4-fetch.ts
 ├── stage1-llm-basics/
-│   ├── 1.1 raw-api.ts
-│   ├── ...
-│   └── NOTES.md
-├── stage2-tool-call/
-│   ├── 2.1 function-call.ts
-│   ├── ...
-│   └── NOTES.md
+│   ├── 1.1-raw-api.ts
+│   └── ...
 ├── ...
 ```
 
