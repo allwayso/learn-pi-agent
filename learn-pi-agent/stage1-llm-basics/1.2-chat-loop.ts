@@ -29,6 +29,8 @@ export class ChatLoop {
    */
   async send(userContent: string): Promise<ChatResult> {
     // TODO: 实现 send()
+    // 提示：1.用户请求和返回结果存入messages队列 2.调用1.1中的chatOnce方法得到返回结果
+    // 通过运行npx tsx 1.2-chat-loop.test.ts来检查是否正确
     
     // 用户请求存入消息队列
     this.messages.push({ role: "user", content: userContent })
