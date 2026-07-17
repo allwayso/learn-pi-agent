@@ -22,6 +22,8 @@ pi 的 4 层架构：
 - Windows 11，bash shell（Git Bash 或 WSL）
 - Node.js 18+，npm
 - DeepSeek API（OpenAI 兼容），key 放 `.env`
+  - **重要**：系统环境变量 `DEEPSEEK_API_KEY`（旧 key）会覆盖 `.env` 中的新 key
+  - **必须**在所有调 DeepSeek 的脚本中使用 `import dotenv from "dotenv"; dotenv.config({ override: true })`，**不要**用 `import "dotenv/config"`
 - 运行：`npx tsx learn-pi-agent/stageN-xxx/N.N file.ts`
 - 依赖：
   - 阶段 1 + 2.1：Node.js 内置 `fetch`，不依赖第三方 HTTP 库
@@ -221,14 +223,20 @@ learn-pi-agent/
 
 ---
 
-## 当前进度：阶段 0
+## 当前进度：阶段 2
 
 - [x] ReAct 论文精读（`ReAct/notes/ReAct.md`）
 - [x] pi agent 源码结构理解
-- [ ] 0.1 `hello.ts`
-- [ ] 0.2 `types.ts`
-- [ ] 0.3 `async.ts`
-- [ ] 0.4 `fetch.ts`
+- [x] 0.1 ~ 0.4 TypeScript 基础（类型/异步/HTTP）
+- [x] 1.1 `raw-api.ts` — HTTP POST → JSON 往返，导出 chatOnce()
+- [x] 1.2 `chat-loop.ts` — ChatLoop 类，消息累积 + 多轮对话
+- [x] 1.3 `streaming.ts` — SSE 流式解析 + token 回调 + buffer 排空
+- [x] 1.4 `json-mode.ts` — response_format 约束 + markdown 清洗 + JSON.parse
+- [x] 1.5 `retry.ts` — 指数退避 + 随机抖动 + withRetry 通用包装器
+- [ ] 2.1 `function-call.ts` — 裸 fetch 手写 tool call
+- [ ] 2.2 `tool-registry.ts` — 切换到 openai SDK，工具注册表
+- [ ] 2.3 `parallel-vs-seq.ts` — 并行 vs 串行工具执行
+- [ ] 2.4 `tool-loop.ts` — 单轮 tool call 循环
 
 ## 协作守则
 
@@ -241,3 +249,5 @@ learn-pi-agent/
 7. API Key 放 `.env`，永不硬编码
 8. 写脚本前先看对应 pi 源码（TS），重点不是翻译语法而是理解"为什么这样设计"
 9. 每完成一个子阶段（如 1.1 raw-api.ts），提醒用户做 git commit，但不代为执行 commit
+10. TODO 留白原则：只写"做什么"，不写"怎么写"。已实现过的操作只给名称，新概念可加一行辅助说明，但不给出完整代码
+11. TODO 代码区格式：用单行 `// ========== YOUR CODE HERE ==========` 标记实现区域起止，该行上方和下方各留一个空行。已完成的实现文件也保留此格式，方便后续回顾挖空练习

@@ -31,19 +31,24 @@ export class ChatLoop {
     // TODO: 实现 send()
     // 提示：1.用户请求和返回结果存入messages队列 2.调用1.1中的chatOnce方法得到返回结果
     // 通过运行npx tsx 1.2-chat-loop.test.ts来检查是否正确
-    
+
+    // ========== YOUR CODE HERE ==========
+
     // 用户请求存入消息队列
     this.messages.push({ role: "user", content: userContent })
-    
+
     // 利用1.1中的chatOnce()发一次请求，返回ChatResult类型结果
     const result = await chatOnce(this.messages)
-    
+
     // 从result中拿出回复内容作为content，存入消息队列
      this.messages.push({ role: "assistant", content: result.content })
-    
-    this.totalTokens += result.usage.totalTokens   
+
+    this.totalTokens += result.usage.totalTokens
     this.turnCount += 1
-    
+
     return result
+
+    // ========== END YOUR CODE ==========
+
   }
 }

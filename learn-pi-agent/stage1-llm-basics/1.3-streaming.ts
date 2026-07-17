@@ -39,7 +39,9 @@ export async function streamChat(
   //    - "data: [DONE]" 表示结束
   //    - 其余行 JSON.parse，取 choices[0].delta.content（可能为 undefined）
   // 4. 每收到一个 token 就调用 onToken(token)
-  // 5. 返回 { content: 完整文本, finishReason, tokens: 所有token数组 }
+  // 5. 返回 { content: 完整文本, finishReason }
+
+  // ========== YOUR CODE HERE ==========
 
   const response = await fetch(API_URL, {
     method: "POST",
@@ -105,5 +107,7 @@ export async function streamChat(
     }
   }
   return {content,finishReason}
-}
 
+  // ========== END YOUR CODE ==========
+
+}
