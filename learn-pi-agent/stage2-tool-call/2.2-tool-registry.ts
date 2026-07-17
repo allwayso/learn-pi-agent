@@ -3,10 +3,21 @@
 //
 // 从这一步开始，不再用裸 fetch，改用 openai SDK（baseURL 指向 DeepSeek）。
 // 核心变化：工具不再散落在外，而是注册到 ToolRegistry 统一管理。
+//
+// TODO 清单：
+//   ToolRegistry.register    — Map.set 存入工具
+//   ToolRegistry.getDefinitions — 遍历 → 包成 OpenAITool 线格式
+//   ToolRegistry.execute     — Map.get 查找 → 调 tool.execute
+//   createDefaultRegistry    — register 两个共享工具
+//   chatWithTools 第 1 次    — SDK create（带 tools）
+//   chatWithTools 第 2 次    — SDK create（不带 tools）
 
 import dotenv from "dotenv"
 dotenv.config({ override: true })
 import OpenAI from "openai"
+
+import { ToolResult, ChatResult } from "../shared/types"
+import { getWeatherTool, calculatorTool } from "../shared/tool-fixtures"
 
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY!
 
@@ -20,6 +31,8 @@ export interface RegisteredTool {
   name: string
   description: string
   parameters: Record<string, any>        // JSON Schema
+  /** 执行模式：默认 "parallel"，标记 "sequential" 时可强制串行 */
+  executionMode?: "parallel" | "sequential"
   execute: (args: Record<string, any>) => Promise<string> | string
 }
 
@@ -71,6 +84,11 @@ export class ToolRegistry {
     // ========== END YOUR CODE ==========
   }
 
+  /** 按名称查找工具，未注册返回 undefined */
+  get(name: string): RegisteredTool | undefined {
+    return this.tools.get(name)
+  }
+
   /** 执行指定工具，返回结果字符串 */
   execute(name: string, args: Record<string, any>): Promise<string> | string {
     // TODO: 查找工具，调用 tool.execute(args)
@@ -93,59 +111,10 @@ export function createDefaultRegistry(): ToolRegistry {
   const registry = new ToolRegistry()
 
   // ========== YOUR CODE HERE (注册工具) ==========
-  // 注册 getWeather 和 calculator 两个工具
-  //
-  // getWeather: 获取城市天气（复用 2.1 的逻辑）
-  // calculator: 执行数学表达式，参数 { expression: string }，内部用 eval 计算
+  // 注册 getWeatherTool 和 calculatorTool（从 shared/tool-fixtures 导入）
 
-  const getWeather:RegisteredTool={
-    name: "getWeather" as const,
-    description: "获取指定城市的天气信息",
-    parameters: {
-      type: "object",
-      properties: {
-        city: {
-          type: "string",
-          description: "城市名称，如 北京、上海、东京",
-        },
-      },
-      required: ["city"],
-    },
-    execute: (args) => {
-       const weathers: Record<string, string> = {
-         "北京": "晴，25°C",
-         "上海": "小雨，22°C",
-       }
-       return weathers[args.city] ?? `未找到 ${args.city} 的天气数据`
-     },
-  }
-
-  const calculator: RegisteredTool = {
-    name: "calculator",
-    description: "执行数学表达式，支持加减乘除和括号",
-    parameters: {
-      type: "object",
-      properties: {
-        expression: {
-          type: "string",
-          description: "数学表达式，如 1+2*3、(1+2)*3",
-        },
-      },
-      required: ["expression"],
-    },
-    execute: (args) => {
-      const expr = args.expression as string
-      try {
-        const result = eval(expr)
-        return `计算结果: ${expr} = ${result}`
-      } catch (e) {
-        return `表达式 "${expr}" 计算失败: ${(e as Error).message}`
-      }
-    },   
-  }
-
-  registry.register(getWeather)
-  registry.register(calculator)
+  registry.register(getWeatherTool)
+  registry.register(calculatorTool)
 
   // ========== END YOUR CODE ==========
 
@@ -153,18 +122,6 @@ export function createDefaultRegistry(): ToolRegistry {
 }
 
 // ─── 对话流程 ───
-
-export interface ToolCallStep {
-  id: string
-  name: string
-  arguments: Record<string, any>
-  result: string
-}
-
-export interface ChatResult {
-  content: string
-  steps: ToolCallStep[]
-}
 
 /**
  * 使用 ToolRegistry 进行工具调用对话
@@ -179,7 +136,7 @@ export async function chatWithTools(
     { role: "user", content: userMessage },
   ]
 
-  const steps: ToolCallStep[] = []
+  const steps: ToolResult[] = []
 
   // 第 1 次调用：带 tools，让 LLM 决定是否调用
 
@@ -205,13 +162,13 @@ export async function chatWithTools(
       ? JSON.parse(tc.function.arguments)
       : tc.function.arguments
     const result = await registry.execute(tc.function.name, args)
-    steps.push({ id: tc.id, name: tc.function.name, arguments: args, result })
+    steps.push({ toolCallId: tc.id, name: tc.function.name, result })
   }
 
   // 注入 assistant 消息（含 tool_calls）和 tool 结果（和 2.1 完全一样）
   messages.push(choice1.message)
   for (const step of steps) {
-    messages.push({ role: "tool", tool_call_id: step.id, content: step.result })
+    messages.push({ role: "tool", tool_call_id: step.toolCallId, content: step.result })
   }
 
   // 第 2 次调用：LLM 根据工具结果生成最终回复

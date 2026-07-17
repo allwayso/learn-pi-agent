@@ -8,9 +8,17 @@
 //   → 你执行这些函数
 //   → 第 2 次 API 调用（注入 tool result 消息）
 //   → LLM 根据结果回复最终答案
+//
+// TODO 清单：
+//   executeToolCall        — if/else 按 tool name 分发到对应函数
+//   chatWithTool 第 1 次   — fetch POST + tools 参数 + 判断 finish_reason
+//   chatWithTool 执行工具   — 遍历 tool_calls → 调 executeToolCall → push 到 steps
+//   chatWithTool 第 2 次   — 注入 messages → 再次 fetch → 拿到最终 content
 
 import dotenv from "dotenv"
 dotenv.config({ override: true })
+
+import { ToolResult, ChatResult } from "../shared/types"
 
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY!
 const API_URL = "https://api.deepseek.com/chat/completions"
@@ -60,16 +68,6 @@ function executeToolCall(name: string, args: Record<string, any>): string {
 
 // ─── 主要流程 ───
 
-export interface ToolCallResult {
-  finalContent: string     // LLM 最终回复（工具调用完成后）
-  toolCalls: Array<{
-    id: string
-    name: string
-    arguments: Record<string, any>
-    result: string
-  }>
-}
-
 /**
  * 完整的一次工具调用流程
  *
@@ -78,7 +76,7 @@ export interface ToolCallResult {
  *   → 把 tool result 作为新消息注入 messages
  *   → 第 2 次请求（让 LLM 根据结果生成最终回复）
  */
-export async function chatWithTool(userPrompt: string): Promise<ToolCallResult> {
+export async function chatWithTool(userPrompt: string): Promise<ChatResult> {
   const messages: any[] = [
     { role: "user", content: userPrompt },
   ]
@@ -95,6 +93,7 @@ export async function chatWithTool(userPrompt: string): Promise<ToolCallResult> 
   // ========== YOUR CODE HERE (第 1 次调用) ==========
 
   let toolCallsReceived: any[] = []
+  let content = ""
 
   const response = await fetch(API_URL, {
     method: "POST",
@@ -114,28 +113,26 @@ export async function chatWithTool(userPrompt: string): Promise<ToolCallResult> 
   const finishReason=Json.choices[0].finish_reason
   const content_1=Json.choices[0].message.content
 
-  if(finishReason !== "tool_calls") return { finalContent: content_1, toolCalls: [] }
+  if(finishReason !== "tool_calls") return { content: content_1, steps: [] }
   
   toolCallsReceived=Json.choices[0].message.tool_calls
 
-  let finalContent = ""
-
   // ========== END YOUR CODE ==========
 
-  const toolResults: ToolCallResult["toolCalls"] = []
+  const steps: ToolResult[] = []
 
   // ─── 执行工具 ───
   for (const tc of toolCallsReceived) {
     const args = JSON.parse(tc.function.arguments)
 
     // ========== YOUR CODE HERE (执行工具) ==========
-    // 调用 executeToolCall(tc.function.name, args)，把结果存入 toolResults
+    // 调用 executeToolCall(tc.function.name, args)，把结果 push 到 steps
 
   const result = executeToolCall(tc.function.name, args)
-  toolResults.push({
-    id: tc.id,
+  steps.push({
+    toolCallId: tc.id,
     name: tc.function.name,
-    arguments: args,
+    // arguments 不在 ToolResult 里，但后面注入消息时需要 id
     result: result
   })
 
@@ -152,9 +149,10 @@ export async function chatWithTool(userPrompt: string): Promise<ToolCallResult> 
 
   // ========== YOUR CODE HERE (第 2 次调用) ==========
 
-  messages.push(Json.choices[0].message)   // 含 tool_calls 的完整 assistant 消息
-  for (const tr of toolResults){
-    messages.push({role:"tool",tool_call_id:tr.id,content:tr.result})
+  // 注入 assistant 消息（含 tool_calls），每条 tool result 需要 tool_call_id
+  messages.push(Json.choices[0].message)
+  for (let i = 0; i < toolCallsReceived.length; i++) {
+    messages.push({role:"tool",tool_call_id:toolCallsReceived[i].id,content:steps[i].result})
   }
 
   const response_2 = await fetch(API_URL, {
@@ -171,9 +169,9 @@ export async function chatWithTool(userPrompt: string): Promise<ToolCallResult> 
     }),
   })
 
-  finalContent=(await response_2.json()).choices[0].message.content
+  content=(await response_2.json()).choices[0].message.content
 
   // ========== END YOUR CODE ==========
 
-  return { finalContent, toolCalls: toolResults }
+  return { content, steps }
 }
