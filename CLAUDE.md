@@ -273,3 +273,13 @@ learn-pi-agent/
 12. TODO 清单写在文件顶部注释中：列出每个 TODO 所在函数名 + 一行大致内容。详细说明保留在代码区的 TODO 注释中，顶部只做索引
 13. 每节课 ≤ 4 个 TODO，聚焦一个核心概念。避免把"搭脚手架"（new OpenAI、dotenv、消息初始化）写成 TODO——TODO 只练本节新概念
 14. 代码复用：类型定义放 `learn-pi-agent/shared/types.ts`，共用的工具夹具放 `learn-pi-agent/shared/tool-fixtures.ts`（或其他 shared 目录）。每节只 import 复用部分，不重复定义。文件保持自包含只适用于"核心学习路径的刻意对比"（如 2.1 fetch vs 2.2 SDK），不适用于数据/类型/工具定义
+15. TODO 设计七原则：
+   a. 描述做什么，不描述怎么做。❌ `Array.from(pendingToolCalls.values())` → ✅ "从 pendingToolCalls 提取 toolCalls 数组"
+   b. 不给完整代码模板。❌ 写出 `{ role: "assistant", content: content \|\| null, tool_calls: ... }` → ✅ "构造 assistant 消息（含 tool_calls 数组）"
+   c. 关键顺序/因果要标清楚。最容易出错的地方不能含糊。例："先 push assistant（for 外面，只一次），再遍历 push tool 结果"
+   d. 变量名在脚手架里规定好。`const delta = chunk.choices[0]?.delta` 留在 CODE HERE 外面，不让人在命名上花时间
+   e. helper 粒度要对。只封最核心的逻辑（如 ensureToolCall），不贪多封整个流程（如 stream 创建 + content 拼接应留在主循环）
+   f. 写过的代码不让人重写。复用逻辑挪进 helper 保留实现，不在主循环里重复开 TODO
+   g. 新概念给提示，旧概念只给名称。增量拼接是新的 → 提示"按 index 分组 + arguments 逐片拼接"；push 消息是旧的 → 只说"push assistant 消息"
+
+   一句话：TODO 是路标，不是施工图。
