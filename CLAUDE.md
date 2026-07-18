@@ -233,10 +233,10 @@ learn-pi-agent/
 - [x] 1.3 `streaming.ts` — SSE 流式解析 + token 回调 + buffer 排空
 - [x] 1.4 `json-mode.ts` — response_format 约束 + markdown 清洗 + JSON.parse
 - [x] 1.5 `retry.ts` — 指数退避 + 随机抖动 + withRetry 通用包装器
-- [ ] 2.1 `function-call.ts` — 裸 fetch 手写 tool call
-- [ ] 2.2 `tool-registry.ts` — 切换到 openai SDK，工具注册表
-- [ ] 2.3 `parallel-vs-seq.ts` — 并行 vs 串行工具执行
-- [ ] 2.4 `tool-loop.ts` — 单轮 tool call 循环
+- [x] 2.1 `function-call.ts` — 裸 fetch 手写 tool call
+- [x] 2.2 `tool-registry.ts` — 切换到 openai SDK，工具注册表
+- [x] 2.3 `parallel-vs-seq.ts` — 并行 vs 串行工具执行
+- [x] 2.4 `tool-loop.ts` — 单轮 tool call 循环
 
 ## 协作守则
 
@@ -250,4 +250,26 @@ learn-pi-agent/
 8. 写脚本前先看对应 pi 源码（TS），重点不是翻译语法而是理解"为什么这样设计"
 9. 每完成一个子阶段（如 1.1 raw-api.ts），提醒用户做 git commit，但不代为执行 commit
 10. TODO 留白原则：只写"做什么"，不写"怎么写"。已实现过的操作只给名称，新概念可加一行辅助说明，但不给出完整代码
-11. TODO 代码区格式：用单行 `// ========== YOUR CODE HERE ==========` 标记实现区域起止，该行上方和下方各留一个空行。已完成的实现文件也保留此格式，方便后续回顾挖空练习
+11. TODO 格式：每个 CODE HERE 区上方必须有 `// TODO: 做什么` 一行描述（写在代码区外面、上方）。代码区内只放实现，不放 TODO 描述。简单 TODO 用一行，复杂 TODO 用多行缩进列表描述步骤。格式：
+   ```
+   // TODO: 做什么（简单用一行）
+
+   // ========== YOUR CODE HERE ==========
+   实现代码
+   // ========== END YOUR CODE ==========
+   ```
+   复杂版本：
+   ```
+   // TODO:
+   //   - 步骤 1
+   //   - 步骤 2
+   //   - 步骤 3
+
+   // ========== YOUR CODE HERE ==========
+   实现代码
+   // ========== END YOUR CODE ==========
+   ```
+   已完成的实现文件也保留此格式，方便后续回顾挖空练习。不使用 `// TODO:` 但无 CODE HERE 区的孤立写法
+12. TODO 清单写在文件顶部注释中：列出每个 TODO 所在函数名 + 一行大致内容。详细说明保留在代码区的 TODO 注释中，顶部只做索引
+13. 每节课 ≤ 4 个 TODO，聚焦一个核心概念。避免把"搭脚手架"（new OpenAI、dotenv、消息初始化）写成 TODO——TODO 只练本节新概念
+14. 代码复用：类型定义放 `learn-pi-agent/shared/types.ts`，共用的工具夹具放 `learn-pi-agent/shared/tool-fixtures.ts`（或其他 shared 目录）。每节只 import 复用部分，不重复定义。文件保持自包含只适用于"核心学习路径的刻意对比"（如 2.1 fetch vs 2.2 SDK），不适用于数据/类型/工具定义

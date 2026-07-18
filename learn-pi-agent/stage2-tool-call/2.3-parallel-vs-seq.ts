@@ -25,8 +25,9 @@ import { ToolCall, ToolResult } from "../shared/types"
  */
 export function shouldRunSequential(toolCalls: ToolCall[], registry: ToolRegistry): boolean {
 
+  // TODO: 如果 toolCalls 中有任意一个 tool 的 executionMode === "sequential"，返回 true
+
   // ========== YOUR CODE HERE ==========
-  // 如果 toolCalls 中有任意一个 tool 的 executionMode === "sequential"，返回 true
   return toolCalls.some((tc) => registry.get(tc.name)?.executionMode === "sequential")
   // ========== END YOUR CODE ==========
 }
@@ -39,9 +40,9 @@ export async function executeParallel(
   registry: ToolRegistry,
 ): Promise<ToolResult[]> {
 
+  // TODO: toolCalls.map → 每个 tc 调 registry.execute(tc.name, tc.arguments) → Promise.all 收集
+
   // ========== YOUR CODE HERE ==========
-  // toolCalls.map → 每个 tc 调 registry.execute(tc.name, tc.arguments)
-  // 然后用 Promise.all 收集所有结果
   const promises = toolCalls.map(async (tc) => {
     const result = await registry.execute(tc.name, tc.arguments)
     return { toolCallId: tc.id, name: tc.name, result }
@@ -58,9 +59,9 @@ export async function executeSequential(
   registry: ToolRegistry,
 ): Promise<ToolResult[]> {
 
+  // TODO: for 循环逐个 await registry.execute，每次 push { toolCallId, name, result }
+
   // ========== YOUR CODE HERE ==========
-  // for 循环遍历 toolCalls，逐个 await registry.execute(tc.name, tc.arguments)
-  // 每次 push { toolCallId, name, result } 到 results 数组
   const results: ToolResult[] = []
   for (const tc of toolCalls) {
     const result = await registry.execute(tc.name, tc.arguments)
@@ -78,9 +79,9 @@ export async function executeToolCalls(
   registry: ToolRegistry,
 ): Promise<ToolResult[]> {
 
+  // TODO: if (shouldRunSequential(...)) → executeSequential，else → executeParallel
+
   // ========== YOUR CODE HERE ==========
-  // if (shouldRunSequential(...)) → executeSequential
-  // else → executeParallel
   if (shouldRunSequential(toolCalls, registry)) {
     return executeSequential(toolCalls, registry)
   }

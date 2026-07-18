@@ -125,8 +125,9 @@ export async function chatWithTool(userPrompt: string): Promise<ChatResult> {
   for (const tc of toolCallsReceived) {
     const args = JSON.parse(tc.function.arguments)
 
+    // TODO: 调用 executeToolCall(tc.function.name, args)，把结果 push 到 steps
+
     // ========== YOUR CODE HERE (执行工具) ==========
-    // 调用 executeToolCall(tc.function.name, args)，把结果 push 到 steps
 
   const result = executeToolCall(tc.function.name, args)
   steps.push({

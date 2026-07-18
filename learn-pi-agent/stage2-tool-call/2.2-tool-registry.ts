@@ -58,11 +58,15 @@ export class ToolRegistry {
   register(tool: RegisteredTool): void {
     // TODO: 存入 this.tools，key 为 tool.name
 
+    // ========== YOUR CODE HERE ==========
+
     this.tools.set(tool.name,tool)
+    // ========== END YOUR CODE ==========
   }
 
   /** 将内部的 RegisteredTool 映射为 OpenAI 线格式 */
   getDefinitions(): OpenAITool[] {
+    // TODO: 遍历 this.tools.values()，每个 tool 包成 { type: "function", function: {...} }
 
     // ========== YOUR CODE HERE ==========
     const OpenAITools:OpenAITool[]=[]
@@ -91,12 +95,15 @@ export class ToolRegistry {
 
   /** 执行指定工具，返回结果字符串 */
   execute(name: string, args: Record<string, any>): Promise<string> | string {
-    // TODO: 查找工具，调用 tool.execute(args)
+    // TODO: 查找工具 → 未找到抛 Error → 调用 tool.execute(args)
+
+    // ========== YOUR CODE HERE ==========
     const tool=this.tools.get(name)
     if (!tool) {
      throw new Error(`工具 "${name}" 未注册`)
     }
     return tool!.execute(args)
+    // ========== END YOUR CODE ==========
   }
 
   get size(): number {
@@ -110,8 +117,9 @@ export class ToolRegistry {
 export function createDefaultRegistry(): ToolRegistry {
   const registry = new ToolRegistry()
 
+  // TODO: 注册 getWeatherTool 和 calculatorTool（从 shared/tool-fixtures 导入）
+
   // ========== YOUR CODE HERE (注册工具) ==========
-  // 注册 getWeatherTool 和 calculatorTool（从 shared/tool-fixtures 导入）
 
   registry.register(getWeatherTool)
   registry.register(calculatorTool)
@@ -138,7 +146,7 @@ export async function chatWithTools(
 
   const steps: ToolResult[] = []
 
-  // 第 1 次调用：带 tools，让 LLM 决定是否调用
+  // TODO: client.chat.completions.create（带 tools）
 
   // ========== YOUR CODE HERE (SDK create with tools) ==========
   const response1 = await client.chat.completions.create({
@@ -171,7 +179,7 @@ export async function chatWithTools(
     messages.push({ role: "tool", tool_call_id: step.toolCallId, content: step.result })
   }
 
-  // 第 2 次调用：LLM 根据工具结果生成最终回复
+  // TODO: client.chat.completions.create（不带 tools，让 LLM 基于结果回复）
 
   // ========== YOUR CODE HERE (SDK create without tools) ==========
   const response2 = await client.chat.completions.create({
