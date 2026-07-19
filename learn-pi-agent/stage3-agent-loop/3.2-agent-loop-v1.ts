@@ -68,11 +68,12 @@ interface AgentLoopConfig {
   signal?: AbortSignal
 }
 
-/** Loop 事件（最小版，3.3 升级为 EventStream） */
+/** Loop 事件 */
 type AgentEvent =
   | { type: "turn_start" }
   | { type: "turn_end" }
   | { type: "message_start"; message: AgentMessage }
+  | { type: "message_update"; message: AgentMessage }  // 流式过程中 token 增量更新
   | { type: "message_end"; message: AgentMessage }
   | { type: "tool_start"; toolCallId: string; toolName: string }
   | { type: "tool_end"; toolCallId: string; toolName: string; result: string }
@@ -119,6 +120,7 @@ async function streamAssistantResponse(
   llmMessages: OpenAI.Chat.ChatCompletionMessageParam[],
   tools: ToolRegistry,
   signal?: AbortSignal,
+  onToken?: (partialContent: string) => void,  // 流式 token 回调
 ): Promise<{ content: string; toolCalls: PendingToolCall[]; stopReason: StopReason }> {
 
   // 变量提到 try 外面，catch 里才能拿到 partial content
@@ -144,7 +146,10 @@ async function streamAssistantResponse(
         return { content, toolCalls: Array.from(pendingToolCalls.values()), stopReason: "aborted" }
       }
       const delta = chunk.choices[0]?.delta
-      if (delta?.content) content += delta.content
+      if (delta?.content) {
+        content += delta.content
+        onToken?.(content)                           // ← 通知上层
+      }
       if (delta?.tool_calls) {
         for (const tc of delta.tool_calls) {
           ensureToolCall(pendingToolCalls, tc)
@@ -261,6 +266,12 @@ export async function agentLoop(
 
       const { content, toolCalls, stopReason } = await streamAssistantResponse(
         fullLlmMessages, context.tools, signal,
+        (partial) => {
+          emit({
+            type: "message_update",
+            message: { role: "assistant", content: partial, timestamp: Date.now() },
+          })
+        },
       )
 
       // TODO:
@@ -346,7 +357,14 @@ export async function agentLoop(
           }
 
           await emit({ type: "tool_start", toolCallId: tc.id, toolName: tc.name })
-          const result = await context.tools.execute(tc.name, JSON.parse(tc.arguments))
+
+          let result: string
+          try {
+            result = await context.tools.execute(tc.name, JSON.parse(tc.arguments))
+          } catch (e: any) {
+            result = `[错误] 工具 "${tc.name}" 执行失败: ${e?.message || String(e)}`
+          }
+
           await emit({ type: "tool_end", toolCallId: tc.id, toolName: tc.name, result })
 
           const toolMsg: AgentMessage = {
