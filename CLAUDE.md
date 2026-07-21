@@ -223,20 +223,15 @@ learn-pi-agent/
 
 ---
 
-## 当前进度：阶段 2
+## 当前进度：阶段 4
 
 - [x] ReAct 论文精读（`ReAct/notes/ReAct.md`）
 - [x] pi agent 源码结构理解
-- [x] 0.1 ~ 0.4 TypeScript 基础（类型/异步/HTTP）
-- [x] 1.1 `raw-api.ts` — HTTP POST → JSON 往返，导出 chatOnce()
-- [x] 1.2 `chat-loop.ts` — ChatLoop 类，消息累积 + 多轮对话
-- [x] 1.3 `streaming.ts` — SSE 流式解析 + token 回调 + buffer 排空
-- [x] 1.4 `json-mode.ts` — response_format 约束 + markdown 清洗 + JSON.parse
-- [x] 1.5 `retry.ts` — 指数退避 + 随机抖动 + withRetry 通用包装器
-- [x] 2.1 `function-call.ts` — 裸 fetch 手写 tool call
-- [x] 2.2 `tool-registry.ts` — 切换到 openai SDK，工具注册表
-- [x] 2.3 `parallel-vs-seq.ts` — 并行 vs 串行工具执行
-- [x] 2.4 `tool-loop.ts` — 单轮 tool call 循环
+- [x] 阶段 0：TypeScript 基础（0.1 ~ 0.4）
+- [x] 阶段 1：LLM 调用基础（1.1 ~ 1.5）
+- [x] 阶段 2：Tool Call（2.1 ~ 2.4）
+- [x] 阶段 3：Agent Loop（3.1 ~ 3.4）
+- [ ] 阶段 4：Agent 类（4.1 ~ 4.6）
 
 ## 协作守则
 
@@ -283,3 +278,12 @@ learn-pi-agent/
    g. 新概念给提示，旧概念只给名称。增量拼接是新的 → 提示"按 index 分组 + arguments 逐片拼接"；push 消息是旧的 → 只说"push assistant 消息"
 
    一句话：TODO 是路标，不是施工图。
+16. CODE HERE 区分发时留空。主文件中每个 CODE HERE 区内不包含实现代码——这是学生的练习空间。已完成实现的文件（如阶段 0~3）保留代码在 CODE HERE 中方便回顾；阶段 4 起所有分发的文件 CODE HERE 留空
+17. 测试放独立 `.test.ts` 文件，不在主文件中写测试或 demo。测试用例要细致严格：覆盖正常路径、边界条件、错误路径。每个 TODO 至少一条对应用例。格式沿用现有 check() 风格（`check("描述", condition, detail?)` + passed/failed 计数器）
+18. TODO 块设计六原则（总纲，统领规则 10-17）：
+   a. **分层原则**：设计给全，实现留白。类型定义（interface/type）给全——这是设计决策，教不是练。类骨架（字段+方法签名）给全。辅助函数/helper 给全。只有本节新概念所在的核心方法体留白
+   b. **聚焦原则**：TODO 只练本节新概念。已有能力（imports、dotenv、类型体操、消息初始化）全给；新概念（如 getter/setter 拷贝保护、闭包工厂）才留白
+   c. **简洁原则**：TODO 描述用要点列表，一行一个步骤。只写"做什么"，不写"为什么"（前面段落注释已讲过），不写"怎么做"（CODE HERE 里要写的内容）。参照 3.3 风格：`// TODO:\n//   - 步骤1\n//   - 步骤2`
+   d. **骨架原则**：函数给签名+返回类型在外面，体在 TODO。类给字段声明+方法签名在外面，方法体在 TODO。CODE HERE 里只有纯实现代码，不涉及命名、类型声明、可见性修饰符
+   e. **定位原则**：控制流在外面，决策点在里面。外层 while/if/try-catch 结构、事件 emit 顺序——这些是架构，给全。具体分支处理、注入时机、队列 drain——这些是决策，留白
+   f. **验证原则**：CODE HERE 留空 + 独立严格测试。分发时 CODE HERE 全部空白（规则 16）；测试放 `.test.ts`（规则 17），覆盖正常+边界+错误三条路径，每个 TODO 至少一条用例
