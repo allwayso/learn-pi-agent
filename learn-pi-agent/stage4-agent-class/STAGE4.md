@@ -1,4 +1,4 @@
-# 阶段 4：Agent 类 —— 状态管理 + 消息队列 + Hook
+# 阶段 4：Agent 类 —— 状态管理 + 消息体系 + 事件 + Hook
 
 对标 pi：`packages/agent/src/agent.ts`（575 行）+ `packages/agent/src/types.ts` AgentLoopConfig
 
@@ -6,197 +6,141 @@
 
 阶段 3 交出了一个完整的 agent loop **函数**：`agentLoop(prompt, ctx, config) → EventStream`。能跑，但状态散落在调用方——`systemPrompt` / `tools` / `messages` 每次 run 手动拼，运行时状态（`isStreaming` / `errorMessage` 等）封在 loop 内部不可见，abort 控制、队列管理全在外面。
 
-阶段 4 把它封装成有生命周期的 **Agent 类**，加上消息体系、hook 和事件订阅。
+阶段 4 把它封装成有生命周期的 **Agent 类**，加上消息体系、事件订阅、hook 链和生命周期管理。
 
 ## 概述
 
-六个脚本逐层搭建：状态管理 → AgentMessage 体系 → steering/followUp 队列 → hook 链 → subscriber → 完整 Agent 类。
+五个脚本逐层搭建，最终在 4.5 整合为完整的 `FullAgent`：
+
+| 脚本 | 内容 | 对标 pi |
+|------|------|---------|
+| 4.1 agent-v1 | 状态管理：AgentState / MutableAgentState + getter/setter 拷贝保护 | `AgentState`，`MutableAgentState` |
+| 4.2 message-layer | AgentMessage 体系（discriminated union）+ convertToLlm + TransformContextFn | `AgentLoopConfig.convertToLlm` |
+| 4.3 subscriber | EventBus：subscribe + emit + 事件历史收集 | `agent.ts` subscribe |
+| 4.4 hooks | AgentLoopConfig hook 签名 + prepareNextTurn | `AgentLoopConfig` hooks |
+| 4.5 agent-full | Stage 4 原生 loop + FullAgent + prompt/abort/reset/steer/followUp | `agent-loop.ts` + `agent.ts` 全文 |
 
 ---
 
-## 设计笔记：readonly / getter , setter / const 
+## 4.1 agent-v1 — 状态管理
 
-### 问题
+**核心认知：把阶段 3 散落在外的状态装进 Agent 类，用 getter/setter 做拷贝保护。**
 
-阶段 4 的 `Agent` 类需要对外暴露一个**完整的状态快照对象**（`AgentState`），包含持久字段（`systemPrompt`、`messages`、`tools`）和运行时字段（`isStreaming`、`errorMessage` 等）。运行时字段由 Agent 内部修改，外部只能读、不能写。
+阶段 3 的 `AgentContext` 每次 run 前手动拼，运行时状态不可见，messages 直接用引用传递。4.1 的 Agent 类一次性构造、多次 run 复用同一份 messages，运行时状态暴露为只读属性。
 
-C++/Java 的传统思路是：
+两个 TODO：
+- `createMutableAgentState`：闭包持有 tools/messages，setter 赋值时 `slice()`
+- `Agent` 类：constructor 调工厂 + `get state()` 对外暴露
 
-```
-方案 A：private + 逐个 getter          方案 B：const 成员
-─────────────────────                 ─────────────────
-class Agent {                         class Agent {
-  private _isStreaming = false          const isStreaming = false
-  private _errorMsg: string
-                                        // 构造后永远不能改
-  get isStreaming() { ... }
-  get errorMsg() { ... }              }
-}
-```
+对标 pi：`agent.ts` 的 `createMutableAgentState()` + `AgentState` 接口。
 
-两种方案在 TypeScript 里都**能用**，但对这个场景不合适——外部需要的不是逐个字段，而是一个整体快照对象。如果逐个 getter，外部要自己拼对象，且拼出来的快照和内部状态脱钩（拿完 `isStreaming` 后它可能已经变了）。
+## 4.2 message-layer — AgentMessage ≠ LLM Message
 
-### pi 的解法：一个对象，两套类型视图
+**核心认知：Agent 内部消息比 LLM 协议更丰富，convertToLlm 在调用边界做映射。**
 
-```ts
-// 同一块内存，两种"眼镜"
-interface AgentState {        // 对外：只读视⻆
-  readonly isStreaming: boolean
-  messages: AgentMessage[]    // 普通属性，靠 setter 保护
-}
+阶段 3 的 AgentMessage 是 `role: "user" | "assistant" | ...` 字符串联合，加新类型要改 union。4.2 用 discriminated union——每种消息独立 interface，加新类型不改现有代码。
 
-type MutableAgentState = ...  // 对内：可写视⻆
-  isStreaming: boolean        // 去掉 readonly
-  get messages() / set messages()  // getter/setter
+LLM 只认识 user/assistant/tool 三种角色。NotificationMessage 和 StatusMessage 在 `convertToLlm` 中被过滤。`transformContext` 是一个 hook 槽位（签名），不是具体实现——调用方自己决定做什么（裁剪、注入、什么都不做）。
 
-class Agent {
-  private _state: MutableAgentState   // 内部操作用可变视角
+两个 TODO：
+- `convertToLlm`：switch type → 过滤 + 映射
+- `prepareLlmMessages`：可选的 transformContext hook → convertToLlm
 
-  get state(): AgentState {
-    return this._state                // 同一个对象！零拷贝
-  }
-}
-```
+对标 pi：`types.ts` AgentMessage 体系 + `agent.ts` defaultConvertToLlm。
 
-关键：**`this._state` 和 `agent.state` 是同一个 JS 对象，只是通过不同的类型镜片去看它。**
+## 4.3 subscriber — 事件订阅
 
-```
-agent.state           → 类型 AgentState（readonly 视⻆）
-agent._state          → 类型 MutableAgentState（可写视⻆）
-                         ↑
-                    同一个 JS 对象
-```
+**核心认知：EventBus 提供 subscribe/emit 基元，Agent 靠它向外广播生命周期事件。**
 
-### 为什么 C++/Java 做不了这个
+和阶段 3 EventStream 的关系：EventStream 是"一次运行"的 push/pull 管道，有结束条件；EventBus 是"长期持活"的监听器集合，Agent 存活期间一直可用。pi 的 `subscribe()` 把 listener 加入 Set，emit 时按注册顺序串行 await。
 
-C++ 和 Java 是**名义类型**（nominal typing）。一个对象是某个类的实例，类的接口在定义时固定——你不能用"另一个类型的镜片"去解释同一个对象。
+关键实现细节：emit 前先把 listeners 复制成快照（`[...this.listeners]`），防止遍历过程中 listener 改 Set 导致不可预测行为。
 
-TypeScript 是**结构化类型**（structural typing）。`AgentState` 和 `MutableAgentState` 是两个独立定义的类型，只要形状兼容就能互相赋值。同一个 JS 对象可以同时满足两个类型的约束，编译器只看你当前通过哪个"镜片"访问——通过 `AgentState` 镜片 → `isStreaming` 是 `readonly`，通过 `MutableAgentState` 镜片 → 可以写。
+三个 TODO：
+- `subscribe`：add + 返回取消函数
+- `emit`：快照 + 遍历 await
+- `createEventHistory`：用 EventBus 收集最近 N 条事件
 
-这不是简单的"防外部修改单个字段"——那用 private + getter 就够了。这里的问题是**外部要一个完整快照对象**，且希望**零拷贝、编译期零开销**。TS 的结构化类型让"同一块内存，两套视图"成为可能。
+对标 pi：`agent.ts` subscribe + listeners 派发。
 
-### 和 `private` 的类比
+## 4.4 hooks — Hook 签名体系
 
-TS 的 `private` 也是编译期约束、运行时消失。`readonly` 同理——编译成 JS 后是完全普通的属性赋值。但这不代表它是"弱约束"：编译期拦截已经足够，因为你不希望外部代码在**不知情**的情况下修改状态。如果外部真的想绕过（`(agent.state as any).isStreaming = true`），那你挡不住也不想挡——和 C++ 的 `const_cast` 一个道理。
+**核心认知：hook 是 AgentLoopConfig 的扩展点，不是 tool 定义层。**
 
-### `messages` 为什么不用 readonly 而用 getter/setter
+阶段 2 的工具只管"怎么执行"，hook 在 loop 侧——在工具执行前后、turn 之间插入逻辑。同一个工具，不同场景用不同 hook 组合，不改工具定义。
 
-`messages` 是数组。`readonly` 只阻止"替换整个数组"，不阻止"通过引用 push/pop"：
+四个 hook 注入点：`beforeToolCall`（可 block）、`afterToolCall`（可覆写 result）、`shouldStopAfterTurn`（判断是否退出）、`prepareNextTurn`（返回下轮配置变更）。其中 `prepareNextTurn` 是唯一主动返回配置变更的 hook——pi 用它做持久化刷新（阶段 5 实现）。
 
-```ts
-readonly messages: AgentMessage[]   // ❌ state.messages = [...] 报错
-                                    // ✅ state.messages.push(...) 不报错
-```
+一个 TODO：`createTurnLimitHook`——超过 N 轮后通过 prepareNextTurn 注入提醒。
 
-getter/setter 可以同时做到：getter 返回引用（性能），setter 在赋值时 `slice()` 拷贝（保护）。但 getter 返回原引用意味着 `agent.state.messages.push(...)` 仍然会修改内部——这是 pi 接受的设计取舍（和 C++ 返回 `const&` 但外部 `const_cast` 后修改类似）。
+对标 pi：`types.ts` AgentLoopConfig 的四个 hook 字段。
 
-> `readonly` + 结构化类型 = 编译期零开销的类型视图切换。和 C++ `const` 的"运行时硬隔离"思路不同，TS 选择"编译期感知、运行时透明"——约束在类型系统里，不在运行时中。
+## 4.5 agent-full — Stage 4 原生 agent loop + FullAgent 整合
+
+**核心认知：用 Stage 4 类型体系从零重写 agent loop，零依赖 Stage 3。**
+
+初版 4.5 尝试把 Stage 3 的 loop 作为黑盒嵌套在 FullAgent 壳里——结果消息格式不兼容（Stage 3 用 `role`，Stage 4 用 `type`），全局 `as any` 桥接。重写版把 loop 从 Stage 3 独立出来，全程使用 4.2 的 discriminated union 消息、4.3 的 EventBus 事件、4.4 的 hook 签名。
+
+双层 while + stopReason 六路 + 工具执行和 Stage 3 一致（脚手架）。新增的是 5 个 hook 调用点：`transformContext`（LLM 调用前）、`beforeToolCall`（可 block）、`afterToolCall`（可覆写 result）、`shouldStopAfterTurn`（判断退出）、`prepareNextTurn`（返回下轮配置）。
+
+`LoopConfig` 预留了阶段 5/6/7 的所有 hook 槽位，全部 optional——新阶段加功能只需在 LoopConfig 加字段 + runAgentLoop 加一处调用点。
+
+FullAgent 持有 `Agent`（状态，4.1）、双 EventBus（`subscribe` 监听生命周期，`subscribeLoop` 监听 loop 内部事件）、`LoopConfig`（hook 配置 + model/apiKey/maxTurns）。对外提供 `prompt()` / `abort()` / `reset()` / `steer()` / `followUp()`。
+
+两个 TODO 组：
+- `runAgentLoop`：5 个 hook 调用点
+- `FullAgent`：prompt / abort / reset
+
+对标 pi：`agent-loop.ts` + `agent.ts` 全文。
 
 ---
 
-## 设计笔记：`type` 数据类型
+## 思考
 
-### `type` vs `interface` vs `class`
+### readonly + 结构化类型 = 一个对象，两套类型视图
 
-| | `interface` | `type` | `class` |
-|---|---|---|---|
-| 是什么 | 描述**对象的形状** | 给**任意类型起别名** | 创建**可 new 的对象** |
-| 运行时存在？ | ❌ 编译后消失 | ❌ 编译后消失 | ✅ 编译后保留 |
-| 能干什么 | 描述对象/函数结构 | 联合、交叉、映射、类型运算 | 实例化、继承、方法调用 |
+阶段 4 的 `Agent` 需要对外暴露一个**完整的状态快照对象**。C++/Java 的传统做法是 private + 逐个 getter，但外部需要的是整个对象，不是零散字段。
 
-`interface` 是 `type` 的子集——凡是 `interface` 能描述的，`type` 也能。但 `type` 能做 `interface` 做不了的三件事：
+pi 的解法：`AgentState`（对外只读）和 `MutableAgentState`（对内可写）是**同一个 JS 对象的两种类型视图**。`agent.state` 返回类型是 `AgentState`——外部只看到 `readonly` 字段；Agent 内部通过 `MutableAgentState` 操作同一块内存。零拷贝，编译期零开销。
 
-**1. 联合类型（Union）**
-```ts
-type StopReason = "stop" | "toolUse" | "maxTokens" | "error" | "aborted"
-//               ↑ interface 永远写不出这个——它不是对象形状，是"几个值之一"
-```
+C++/Java 做不了这个，因为它们是**名义类型**（nominal typing）——对象的类型在定义时固定，不能换"镜片"。TypeScript 是**结构化类型**（structural typing），`AgentState` 和 `MutableAgentState` 是独立定义的两个类型，只要形状兼容就能互相赋值。
 
-**2. 交叉类型（Intersection）——4.1 就在做这个**
-```ts
-// 从 AgentState 里挖掉 6 个字段，焊上新的 getter/setter 签名
-type MutableAgentState = Omit<AgentState, "tools" | "messages" | "isStreaming" | ...>
-  & {
-      get tools(): ToolRegistry
-      set tools(t: ToolRegistry)
-    }
-```
-这是**类型层面的手术**——把一个 interface 的字段拆掉几个，再拼上新的。`interface extends` 只能做加法（加字段），做不了减法和替换。
+`readonly` 和 `private` 一样是编译期约束、运行时消失——但编译期拦截已经足够。如果外部真要用 `as any` 绕过，那和 C++ 的 `const_cast` 一个道理——挡不住也不想挡。
 
-**3. 工具类型**
-```ts
-type Readonly<T>  = { readonly [K in keyof T]: T[K] }  // 全变 readonly
-type Partial<T>   = { [K in keyof T]?: T[K] }          // 全变可选
-type Omit<T, K>   = Pick<T, Exclude<keyof T, K>>       // 挖掉几个字段
-```
-这些都是 `type`，操作的是**类型本身**，不是具体的值。`interface` 做不到。
+`messages` 为什么用 getter/setter 而非 readonly？因为 `readonly` 只阻止替换整个数组，不阻止 `push/pop`。setter 在赋值时 `slice()` 做拷贝保护，getter 返回原引用（性能取舍，和 pi 一致）。
 
-### 和 C++ 的对比
+### `type`：类型手术刀，不是别名
 
-C++ 有 `typedef` 和 `using`：
-```cpp
-using StopReason = std::variant<Stop, ToolUse, MaxTokens, Error, Aborted>;
-```
-但这只是**给已有类型起别名**。TS `type` 的能力远超别名——联合类型是语言内置的（C++ 需要 `std::variant` 模板），交叉类型没有 C++ 等价物（多重继承算部分重叠），`Omit` / `Pick` / `Readonly` 这些类型运算在 C++ 里需要模板元编程，动辄几十行。
+`interface` 只能描述对象形状 + extends 做加法。`type` 能做 `interface` 做不了的三件事：联合类型（`A | B`）、交叉类型（`Omit + &` 做字段替换）、工具类型（`Readonly<T>`、`Partial<T>`）。
 
-一句话：C++ `using` 是便利贴，TS `type` 是手术刀。
+C++ 的 `typedef`/`using` 只是别名；TS `type` 操作的是类型本身。4.1 的 `MutableAgentState = Omit<AgentState, ...> & { ... }` 就是典型的类型手术——删掉原字段、焊上新签名，`interface extends` 做不了。
 
-### 4.1 为什么必须用 `type`
+当前 4.1 删 6 留 1，Omit 显得杀鸡用牛刀，但 AgentState 以后加字段时 Omit 的优势就体现出来了：新字段自动穿透，不用手动同步。
 
-`MutableAgentState` 不是在 `AgentState` 上**加**字段——它要**替换** `tools`/`messages` 的签名（普通属性 → getter/setter）、**去掉** `isStreaming` 等的 `readonly`。`interface extends` 只能加不能改，只有 `type` + `Omit` + `&` 能做这种"拆墙换梁"操作。
+### `get`/`set`：字段升级为逻辑对调用方透明
 
-> 题外话：当前 4.1 删 6 留 1，Omit 显得杀鸡用牛刀——手写一个新 interface 效果一样。Omit 的真正收益在 AgentState 加字段时体现：新字段自动穿透到 MutableAgentState，不用手动同步。pi 源码用 Omit 不是偷懒，是把"我是你的变体"这个设计意图编码进类型。
+C++/Java 把 public 字段改成方法时，所有调用方都要从 `obj.x` 改成 `obj.setX()`。JS/TS 的 getter/setter 让这次升级完全透明——外部写法不变，但背后已经走了函数逻辑。
+
+4.1 的 `AgentState` 声明 `messages: AgentMessage[]`——看起来是普通字段。外部写 `agent.state.messages = arr` 时，`MutableAgentState` 的 setter 在背后做了 `slice()` 拷贝。调用方零感知。
+
+### Hook："Don't call us, we'll call you"
+
+Hook 的三个要素：**时机归框架，逻辑归你，可选**。在 pi 中，`beforeToolCall`、`afterToolCall`、`shouldStopAfterTurn`、`prepareNextTurn` 全是 hook——loop 在特定节点主动调用，hook 函数由外部注入，不传就跳过。
+
+最早来自 Emacs（1976），后被 Git（`pre-commit`）、React（`useEffect`）继承。pi 的 agent loop 本质是"我控制主循环节奏，你通过 hook 插入自定义逻辑"。
 
 ---
 
-## 设计笔记：为什么 JS/TS 有单独的 `get`/`set` 签名
+## 阶段 4 总结：你已经具备的能力
 
-### 不是什么语法糖——是"字段升级为逻辑"对调用方透明
+| 脚本 | 能力 | 对标 pi |
+|------|------|---------|
+| 4.1 agent-v1 | 状态封装 + getter/setter 拷贝保护 | `AgentState`，`MutableAgentState` |
+| 4.2 message-layer | AgentMessage discriminated union + convertToLlm | `AgentLoopConfig.convertToLlm` |
+| 4.3 subscriber | EventBus + subscribe/emit/历史收集 | `agent.ts` subscribe |
+| 4.4 hooks | 四个 hook 签名 + prepareNextTurn | `AgentLoopConfig` hooks |
+| 4.5 agent-full | Stage 4 原生 agent loop（双层 while + hook）+ FullAgent 整合 + CLI v2 | `agent-loop.ts` + `agent.ts` 全文 |
 
-C++/Java 如果想把一个 public 字段改成需要校验的：
+## 启下：阶段 5 预览
 
-```cpp
-// v1
-class User {
-public:
-  std::string name;           // 直接暴露字段
-};
-user.name = "Bob";            // 调用方这样写
-
-// v2 — 需要加校验，只能改成方法
-class User {
-  std::string _name;
-public:
-  const std::string& getName() const { return _name; }
-  void setName(const std::string& v) { if (v.empty()) throw; _name = v; }
-};
-user.setName("Bob");          // ← 所有调用方必须从 obj.name 改成 obj.setName()
-```
-
-**字段升级为逻辑，破坏了所有调用方。** 这就是 C++/Java 不用 getter/setter 语法而用 `getXxx()`/`setXxx()` 约定的原因——从一开始就强迫调用方用方法，不给字段访问的"假接口"。
-
-JS/TS 选了另一条路：
-
-```ts
-// v1
-class User {
-  name = "Alice"
-}
-user.name = "Bob"            // 直接赋值
-
-// v2 — 需要校验，改成 getter/setter，调用方一行不用改
-class User {
-  private _name = "Alice"
-  get name() { return this._name }
-  set name(v: string) { if (!v) throw Error(); this._name = v }
-}
-user.name = "Bob"            // ← 还是这行！但走了 setter 的校验逻辑
-```
-
-**字段到逻辑的升级完全透明。** 代价是调用方不知道背后有函数调用（看起来像 O(1) 读内存，实际可能走了复杂计算），所以社区约定 getter 不做重操作。
-
-### 对 4.1 的意义
-
-外部看到的 `AgentState` 声明 `messages: AgentMessage[]`——**看起来就是个普通字段**。`agent.state.messages = arr` 这行代码，调用方以为自己只是在赋值，实际上 `MutableAgentState` 的 setter 在背后做了 `slice()` 拷贝保护。
-
-如果用 `setMessages(arr)` / `getMessages()` 方法，调用方必须**知道**这里不能直接赋值——封装的意义被打折。getter/setter 做到了**零语法成本的防御**：外部代码不需要知道你做了什么手脚，写法和普通属性一模一样。
+阶段 4 的 Agent 是一个"纯内存"对象。阶段 5 加上持久化层——JSONL append-only 会话存储、系统提示词分层组装、Skill 加载与注入。`prepareNextTurn` hook 在 LoopConfig 中已经预留了槽位：每轮结束时自动调用，可用于 flush JSONL、重读状态、更新 systemPrompt。
