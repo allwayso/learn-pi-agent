@@ -5,12 +5,22 @@
 //   本文件用 Stage 4 类型体系从零写 agent loop，零依赖 Stage 3。
 //
 // TODO 清单：
-//   runAgentLoop hook 调用点（5 处）
-//   FullAgent.prompt / abort / reset
+//   runAgentLoop hook 调用点（5 处：1a~1e）
+//   ensureStore / loadHistory / persistToStore（2a：Session 持久化）
+//   FullAgent.prompt / abort / reset（2b：生命周期 + session 整合）
 
 import dotenv from "dotenv"
 dotenv.config({ override: true })
 import OpenAI from "openai"
+import * as path from "path"
+import * as fs from "fs/promises"
+
+// ★ Session 持久化（阶段 5.1）
+import {
+  JsonlSessionStorage,
+  nodeSessionFS,
+  type MessageEntry,
+} from "../stage5-harness/5.1-session-store.js"
 
 import { Agent, type AgentOptions } from "./4.1-agent-v1"
 import {
@@ -71,6 +81,9 @@ interface LoopConfig {
 
   // 取消
   signal?: AbortSignal
+
+  /** ★ 持久化回调：每条新消息 push 后调用，返回 entry id */
+  persistMessage?: (msg: AgentMessage) => Promise<string>
 }
 
 type LoopEvent =
@@ -211,6 +224,7 @@ async function runAgentLoop(
   bus: EventBus<LoopEvent>,
 ): Promise<AgentMessage[]> {
   const signal = config.signal
+  const { persistMessage } = config
 
   // 推送用户消息
   const userMsg: AgentMessage = {
@@ -219,6 +233,7 @@ async function runAgentLoop(
   context.messages.push(userMsg)
   await bus.emit({ type: "message_start", message: userMsg })
   await bus.emit({ type: "message_end", message: userMsg })
+  await persistMessage?.(userMsg)
 
   // ── 外层 while（followUp 队列）──
   while (true) {
@@ -303,6 +318,7 @@ async function runAgentLoop(
           context.messages.push(msg)
           await bus.emit({ type: "message_start", message: msg })
           await bus.emit({ type: "message_end", message: msg })
+          await persistMessage?.(msg)
           break
         }
 
@@ -364,6 +380,7 @@ async function runAgentLoop(
         context.messages.push(assistantMsg)
         await bus.emit({ type: "message_start", message: assistantMsg })
         await bus.emit({ type: "message_end", message: assistantMsg })
+        await persistMessage?.(assistantMsg)
 
         for (const tc of toolCalls) {
           if (signal?.aborted) return context.messages
@@ -471,6 +488,7 @@ async function runAgentLoop(
           context.messages.push(toolMsg)
           await bus.emit({ type: "message_start", message: toolMsg })
           await bus.emit({ type: "message_end", message: toolMsg })
+          await persistMessage?.(toolMsg)
         }
       }
 
@@ -514,6 +532,10 @@ async function runAgentLoop(
           toolCallCount:toolResults.length,
           turnNumber:turnNumber,
         }
+        const result = await config.prepareNextTurn(prepareContext);
+        if (result?.systemPrompt) {
+          context.systemPrompt = result.systemPrompt;
+        }
       }
       // ========== END YOUR CODE ==========
 
@@ -553,11 +575,17 @@ export class FullAgent {
   private steeringMessages: AgentMessage[] = []
   private followUpMessages: AgentMessage[] = []
 
+  // ★ Session 持久化
+  private store: JsonlSessionStorage | null = null
+  private sessionsDir: string
+
   constructor(
     stateInit: AgentOptions = {},
     loopConfig: Partial<LoopConfig> = {},
+    sessionsDir = path.join(process.cwd(), ".sessions"),
   ) {
     this.agent = new Agent(stateInit)
+    this.sessionsDir = sessionsDir
     this.config = {
       model: loopConfig.model ?? "deepseek-v4-pro",
       apiKey: loopConfig.apiKey ?? process.env.DEEPSEEK_API_KEY ?? "",
@@ -600,10 +628,89 @@ export class FullAgent {
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // TODO 2: prompt / abort / reset
+  // TODO 2a: Session 持久化 — ensureStore / loadHistory / persistToStore
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /** ★ 确保 session store 已初始化（首次调用 prompt 时触发） */
+  private async ensureStore(): Promise<JsonlSessionStorage> {
+    // TODO:
+    //   - 确保 sessionsDir 存在（await fs.mkdir(sessionsDir, { recursive: true })）
+    //   - 生成 sessionId（crypto.randomUUID()）
+    //   - 用 JsonlSessionStorage.create 创建并赋值 this.store
+    //   - 返回 this.store
+
+    // ========== YOUR CODE HERE ==========
+    await fs.mkdir(this.sessionsDir,{recursive:true})
+    const sessionId=crypto.randomUUID()
+    this.store=await JsonlSessionStorage.create(
+      nodeSessionFS,
+      path.join(this.sessionsDir,`${sessionId}.jsonl`),
+      { cwd: process.cwd(), sessionId },  
+    )
+    return this.store
+    // ========== END YOUR CODE ==========
+  }
+
+  /** ★ 从 store 加载历史消息链 */
+  private async loadHistory(): Promise<AgentMessage[]> {
+    // TODO:
+    //   - 获取 leafId：await this.store!.getLeafId()
+    //   - 沿链回溯：await this.store!.getPathToRoot(leafId)
+    //   - 过滤 type === "message" 的 Entry
+    //   - 解出 .message 字段，返回 AgentMessage[]
+
+    // ========== YOUR CODE HERE ==========
+
+    const leafId=await this.store!.getLeafId()
+    const entries=await this.store!.getPathToRoot(leafId)
+    return entries
+     .filter((e): e is MessageEntry => e.type === "message")  //数组的filter方法，按给定条件筛选元素，返回新数组
+     .map(e => e.message);  //数组的map方法，把元素映射为新的值
+
+    // ========== END YOUR CODE ==========
+  }
+
+  /** ★ 将一条 AgentMessage 包装成 MessageEntry 并写入 store */
+  private async persistToStore(msg: AgentMessage): Promise<string> {
+    // TODO:
+    //   - 获取 entryId：await this.store!.createEntryId()
+    //   - 获取 parentId：await this.store!.getLeafId()
+    //   - 构造 MessageEntry：{ type: "message", id: entryId, parentId, timestamp: new Date().toISOString(), message: msg }
+    //   - 调用 await this.store!.appendEntry(entry)
+    //   - 返回 entryId
+
+    // ========== YOUR CODE HERE ==========
+
+    const entryId=await this.store!.createEntryId()
+    const parentId=await this.store!.getLeafId()
+    const messageEntry:MessageEntry={
+      type:"message",
+      id:entryId,
+      parentId:parentId,
+      timestamp:new Date().toISOString(),
+      message:msg,
+    }
+     
+    await this.store!.appendEntry(messageEntry)
+    return entryId
+
+    // ========== END YOUR CODE ==========
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TODO 2b: prompt / abort / reset（生命周期管理 + session 整合）
   // ═══════════════════════════════════════════════════════════════════════════
 
   async prompt(userMessage: string): Promise<void> {
+    // ★ 首次调用时初始化 store + 加载历史
+    if (!this.store) {
+      await this.ensureStore();
+      const history = await this.loadHistory();
+      if (history.length > 0) {
+        this.agent.state.messages = history as any;
+      }
+    }
+
     // TODO: 生命周期管理
     // ========== YOUR CODE HERE ==========
     if (this._isRunning) this.abort()
@@ -618,6 +725,7 @@ export class FullAgent {
     const fullConfig: LoopConfig = {
       ...this.config,
       signal: this.currentController.signal,
+      persistMessage: (msg) => this.persistToStore(msg),
       getSteeringMessages: async () => {
         const d = this.steeringMessages.slice()
         this.steeringMessages = []
@@ -649,12 +757,32 @@ export class FullAgent {
     // ========== END YOUR CODE ==========
   }
 
-  reset(): void {
-    // TODO: 重置对话
+  async reset(): Promise<void> {
+    // TODO: 重置对话 + 清空 session
     // ========== YOUR CODE HERE ==========
     this.abort()
     this.agent.state.messages = []
     this._isRunning = false
     // ========== END YOUR CODE ==========
+
+    // ★ 重置 session 游标
+    void this.store?.setLeafId(null);
+  }
+
+  /** ★ 从指定 session 文件恢复对话 */
+  async resumeSession(sessionPath: string): Promise<void> {
+    this.abort()
+    this.store = await JsonlSessionStorage.open(nodeSessionFS, sessionPath)
+    const leafId = await this.store.getLeafId()
+    const entries = await this.store.getPathToRoot(leafId)
+    const history = entries
+      .filter((e): e is MessageEntry => e.type === "message")
+      .map(e => e.message)
+    this.agent.state.messages = history as any
+  }
+
+  /** ★ 当前 session 文件路径（null = 尚未初始化） */
+  get sessionPath(): string | null {
+    return this.store?.getMetadata().filePath ?? null
   }
 }

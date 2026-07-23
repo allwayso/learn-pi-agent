@@ -153,12 +153,11 @@ learn-pi-agent/
 
 | 脚本 | 内容 | 对标 pi |
 |------|------|---------|
-| `4.1 agent-v1.ts` | 状态管理：systemPrompt/model/tools/messages + isStreaming/streamingMessage/pendingToolCalls/errorMessage | `AgentState`，`MutableAgentState` |
-| `4.2 message-layer.ts` | AgentMessage 体系 + convertToLlm + transformContext。展示自定义消息类型如何融入对话流 | `AgentLoopConfig.convertToLlm` |
-| `4.3 steer-follow.ts` | steering 队列（中断注入）+ followUp 队列（结束后继续）+ QueueMode（one-at-a-time / all） | `getSteeringMessages`，`getFollowUpMessages` |
-| `4.4 hooks.ts` | beforeToolCall（校验后可 block）、afterToolCall（执行后可覆写 result）、shouldStopAfterTurn、prepareNextTurn。hook 属于 AgentLoopConfig 层，不是 tool 定义层 | `AgentLoopConfig` hooks |
-| `4.5 subscriber.ts` | 事件订阅：subscribe() → 多个 listener 按注册顺序 await。agent_end 的 listener 也是 run 的一部分，所有 listener settle 后 agent 才算 idle | `agent.ts` subscribe |
-| `4.6 agent-full.ts` | 整合：Agent 类 + prompt/continue/abort/reset。abort() 通过 AbortController 传播到全部层级 | `agent.ts` 全文 |
+| `4.1 agent-v1.ts` | 状态管理：AgentState / MutableAgentState + getter/setter 拷贝保护 | `AgentState`，`MutableAgentState` |
+| `4.2 message-layer.ts` | AgentMessage 体系（discriminated union）+ convertToLlm + TransformContextFn | `AgentLoopConfig.convertToLlm` |
+| `4.3 subscriber.ts` | EventBus：subscribe + emit + 事件历史收集 | `agent.ts` subscribe |
+| `4.4 hooks.ts` | 四个 hook 签名 + prepareNextTurn 示例 | `AgentLoopConfig` hooks |
+| `4.5 agent-full.ts` | Stage 4 原生 agent loop（双层 while + hook 调用点）+ FullAgent 整合 + CLI v2 | `agent-loop.ts` + `agent.ts` 全文 |
 
 产出：带状态管理、消息队列、hook 和 abort 的 Agent 类。
 
@@ -168,11 +167,11 @@ learn-pi-agent/
 
 | 脚本 | 内容 | 对标 pi |
 |------|------|---------|
-| `5.1 session-store.ts` | JSONL append-only 会话存储。每条消息一行 JSON，可增量追加、完整回放 | `harness/session/jsonl-storage.ts`，`session.ts` |
-| `5.2 system-prompt.ts` | 系统提示词分层组装：基础 prompt + skills 摘要 + tool 列表 + 环境信息 | `harness/system-prompt.ts` |
-| `5.3 skills-loader.ts` | Skill 加载：遍历目录 → 解析 SKILL.md → 校验 frontmatter → 注入 system prompt。支持 ignore 文件 | `harness/skills.ts` |
-| `5.4 prompt-templates.ts` | Prompt Template：预定义模板 → 参数填充 → 注入 conversation | `harness/prompt-templates.ts` |
-| `5.5 agent-harness-v1.ts` | 整合：AgentHarness = Agent + Session + Skills + SystemPrompt + PromptTemplates | `harness/agent-harness.ts` |
+| `5.1 session-store.ts` | JSONL append-only 会话存储。每条消息一行 JSON，可增量追加、完整回放。引入 Entry 树（parentId 链）替代简单消息列表 | `harness/session/jsonl-storage.ts`，`session.ts` |
+| `5.3 skills-loader.ts` | Skill 加载：遍历目录 → 解析 SKILL.md YAML frontmatter → 校验 → 产出 Skill[]。引入 Result<T,E> 错误处理模式。支持 ignore 文件 | `harness/skills.ts` |
+| `5.2 system-prompt.ts` | 系统提示词分层组装：基础 prompt + skills 摘要（消费 5.3 产出的 Skill[]）+ tool 列表 + 环境信息。纯格式化函数 | `harness/system-prompt.ts` |
+| `5.4 prompt-templates.ts` | Prompt Template：预定义模板 → 参数替换（$1/$@/${@:N}）→ 注入 conversation | `harness/prompt-templates.ts` |
+| `5.5 agent-harness-v1.ts` | 整合：AgentHarness = Agent + Session + Skills + SystemPrompt + PromptTemplates。Phase 状态机、pending writes、queue mode、事件桥接 | `harness/agent-harness.ts` |
 
 产出：理解 session 持久化、skills 发现与注入、系统提示词组装。
 
@@ -231,11 +230,11 @@ learn-pi-agent/
 - [x] 阶段 1：LLM 调用基础（1.1 ~ 1.5）
 - [x] 阶段 2：Tool Call（2.1 ~ 2.4）
 - [x] 阶段 3：Agent Loop（3.1 ~ 3.4）
-- [ ] 阶段 4：Agent 类（4.1 ~ 4.6）
+- [x] 阶段 4：Agent 类（4.1 ~ 4.5）
 
 ## 协作守则
 
-1. 每个脚本 < 200 行，先给完整可运行代码，再逐段解释
+1. 每个脚本尽量精简，先给完整可运行代码，再逐段解释。整合型文件（如阶段末的 agent-full）允许超过 200 行
 2. 每阶段结束时，指出 pi 的哪个文件/函数对应刚写的东西
 3. 阶段 1 + 2.1 用 Node.js 内置 `fetch`，2.2 起用 `openai` SDK。目标不是学 HTTP 而是学 agent 架构
 4. 讲新概念时搜索 arXiv/博客/GitHub，标注出处
@@ -287,3 +286,7 @@ learn-pi-agent/
    d. **骨架原则**：函数给签名+返回类型在外面，体在 TODO。类给字段声明+方法签名在外面，方法体在 TODO。CODE HERE 里只有纯实现代码，不涉及命名、类型声明、可见性修饰符
    e. **定位原则**：控制流在外面，决策点在里面。外层 while/if/try-catch 结构、事件 emit 顺序——这些是架构，给全。具体分支处理、注入时机、队列 drain——这些是决策，留白
    f. **验证原则**：CODE HERE 留空 + 独立严格测试。分发时 CODE HERE 全部空白（规则 16）；测试放 `.test.ts`（规则 17），覆盖正常+边界+错误三条路径，每个 TODO 至少一条用例
+19. 代码可读性优先于行数限制。正常换行、正常缩进，不要为了省行数把多条语句挤在一行。整合型文件（如 4.5 agent-full）允许超过 200 行
+20. JSDoc 只描述"是什么"，不描述实现过程。类型/函数的 JSDoc 写用途和职责，不写"用闭包持有变量"、"setter 赋值时 slice"这类实现细节——那些放在 TODO 描述里
+21. 脚手架复用原则：如果本节逻辑和前一阶段完全一致（如 streamAssistantResponse、stopReason 六路分支），直接写完整实现作为脚手架，不作为 TODO。只把本阶段新增的能力（如 hook 调用点、EventBus 发射）留白
+22. 跨脚本类型所有权：同名类型只能从一个文件 export。如果 4.1 和 4.2 都需要 AgentMessage，4.2 定义，4.1 从 4.2 import——不在两个文件里定义同名不同类型

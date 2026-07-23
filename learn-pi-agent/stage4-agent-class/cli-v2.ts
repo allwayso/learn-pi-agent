@@ -1,17 +1,22 @@
 // cli-v2.ts — 阶段 4 命令行 agent（FullAgent 版）
 // 运行：npx tsx learn-pi-agent/stage4-agent-class/cli-v2.ts
 //
+// ★ 阶段 5.1 集成：
+//   /sessions  — 列出所有历史 session 文件
+//   /resume N  — 恢复指定 session 继续对话
+//   /status    — 查看当前 agent 状态
+//
 // 和阶段 3 cli.ts 的对比（注释中标记 ★ 的是阶段 4 增量）：
 //   ★ 对话记忆跨轮保留——不再每次 new 空 messages
-//   ★ convertToLlm 注入一次，不在 CLI 里手写
 //   ★ agent.abort() 支持中断
 //   ★ agent.subscribe() 事件监听
 //   ★ agent.isRunning 运行时状态可查
-//   ★ 消息类型从字符串 role 升级为 discriminated union（4.2 AgentMessage）
-//   ★ convertToLlm 不在 CLI 里手写——stage 3 用内置 defaultConvertToLlm
 
 import * as readline from "readline"
+import * as fs from "fs/promises"
+import * as path from "path"
 import { FullAgent } from "./4.5-agent-full"
+import type { SessionHeader } from "../stage5-harness/5.1-session-store"
 import { ToolRegistry } from "../stage2-tool-call/2.2-tool-registry"
 import { realWeatherTool, wikipediaTool } from "../shared/real-tools"
 
@@ -84,6 +89,49 @@ process.on("SIGINT", () => {
   // 不退出进程——下一次 prompt 可以继续
 })
 
+// ★ 5.1: Session 恢复功能
+const SESSIONS_DIR = path.join(process.cwd(), ".sessions")
+
+interface SessionListItem {
+  path: string
+  timestamp: string
+  cwd: string
+  /** 首行文件大小估算，简单判断空 session */
+  size: number
+}
+
+async function listSessions(): Promise<SessionListItem[]> {
+  try {
+    await fs.mkdir(SESSIONS_DIR, { recursive: true })
+    const files = await fs.readdir(SESSIONS_DIR)
+    const jsonlFiles = files.filter(f => f.endsWith(".jsonl"))
+
+    const items: SessionListItem[] = []
+    for (const file of jsonlFiles) {
+      const filePath = path.join(SESSIONS_DIR, file)
+      const stat = await fs.stat(filePath)
+      try {
+        const content = await fs.readFile(filePath, "utf-8")
+        const firstLine = content.split("\n")[0]
+        const header = JSON.parse(firstLine) as SessionHeader
+        items.push({
+          path: filePath,
+          timestamp: header.timestamp ?? "unknown",
+          cwd: header.cwd ?? "?",
+          size: stat.size,
+        })
+      } catch {
+        // 跳过损坏的文件
+      }
+    }
+    // 按时间倒序
+    items.sort((a, b) => b.timestamp.localeCompare(a.timestamp))
+    return items
+  } catch {
+    return []
+  }
+}
+
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout,
@@ -93,6 +141,49 @@ const rl = readline.createInterface({
 rl.on("line", async (line) => {
   const input = line.trim()
   if (!input) return
+
+  if (input === "/sessions") {
+    const sessions = await listSessions()
+    if (sessions.length === 0) {
+      console.log("\n  (无历史 session)")
+    } else {
+      console.log(`\n─── 历史 Session (${sessions.length} 个) ───`)
+      const currentPath = agent.sessionPath
+      sessions.forEach((s, i) => {
+        const marker = s.path === currentPath ? " ← 当前" : ""
+        const date = new Date(s.timestamp).toLocaleString("zh-CN")
+        const kb = (s.size / 1024).toFixed(1)
+        console.log(`  [${i}] ${date}  ${kb}KB  ${s.cwd}${marker}`)
+      })
+      console.log(`  输入 /resume N 恢复指定 session`)
+      console.log(`──────────────────────────`)
+    }
+    process.stdout.write("\n> ")
+    return
+  }
+
+  if (input.startsWith("/resume")) {
+    const parts = input.split(/\s+/)
+    const idx = parseInt(parts[1]!, 10)
+    if (isNaN(idx)) {
+      console.log("  用法: /resume N（N 是 /sessions 列表中的编号）")
+      process.stdout.write("\n> ")
+      return
+    }
+    const sessions = await listSessions()
+    if (idx < 0 || idx >= sessions.length) {
+      console.log(`  编号 ${idx} 无效，共 ${sessions.length} 个 session（0~${sessions.length - 1}）`)
+      process.stdout.write("\n> ")
+      return
+    }
+    const target = sessions[idx]!
+    console.log(`\n  恢复 session: ${path.basename(target.path)}...`)
+    await agent.resumeSession(target.path)
+    console.log(`  已加载 ${agent.state.messages.length} 条消息`)
+    console.log(`  最后活动: ${new Date(target.timestamp).toLocaleString("zh-CN")}`)
+    process.stdout.write("\n> ")
+    return
+  }
 
   if (input === "/status") {
     console.log(`\n─── Agent 完整状态 ───`)
@@ -130,7 +221,9 @@ rl.on("line", async (line) => {
 })
 
 async function main() {
-  console.log("Agent v2 已就绪（天气 + Wikipedia）。输入 /status 查看状态，Ctrl+C 退出。")
+  console.log("Agent v2 已就绪（天气 + Wikipedia）。")
+  console.log("  /sessions  列出历史 session    /resume N  恢复指定 session")
+  console.log("  /status    查看 agent 状态     Ctrl+C    退出")
   console.log("💡 agent 思考时可直接输入下一条——会被 followUp 队列自动处理。")
   console.log(`[状态] 初始消息数: ${agent.state.messages.length}`)
   process.stdout.write("\n> ")
